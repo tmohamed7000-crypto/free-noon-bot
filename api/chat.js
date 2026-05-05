@@ -59,7 +59,7 @@ export default async function handler(req, res) {
 "تقدر تعمل طلب إرجاع بسهولة من خلال تطبيق أو موقع نون من صفحة طلباتك 👍
 
 من هنا 👇
-https://www.noon.com/"
+https://www.noon.com"
 
 → توقف (لا تسأل أي سؤال)
 
