@@ -20,14 +20,15 @@ function isReturn(text) {
   return /ارجاع|ارجع|استرجاع/i.test(text);
 }
 
+// ✅ يقبل كلمة واحدة أو كلمتين
 function isLikelyName(text) {
   const words = text.trim().split(" ");
 
-  if (words.length < 2 || words.length > 3) return false;
+  if (words.length < 1 || words.length > 3) return false;
   if (/\d/.test(text)) return false;
   if (isGreeting(text)) return false;
   if (/تمام|اوكي|حاضر|ماشي/i.test(text)) return false;
-  if (text.length < 3 || text.length > 25) return false;
+  if (text.length < 2 || text.length > 25) return false;
 
   return true;
 }
@@ -41,17 +42,20 @@ function extractData(text, session) {
 
   if (session.name && normalize(session.name) === clean) return;
 
+  // اسم
   if (!session.name && isLikelyName(text)) {
     session.name = text;
     return;
   }
 
+  // رقم
   const phoneMatch = text.match(/01\d{9}/);
   if (phoneMatch && !session.phone) {
     session.phone = phoneMatch[0];
     return;
   }
 
+  // عنوان
   if (
     session.phone &&
     !session.address &&
@@ -63,7 +67,7 @@ function extractData(text, session) {
 }
 
 // ========================
-// 🤖 AI Intent (مع حماية)
+// 🤖 AI Intent
 // ========================
 
 async function detectIntent(message) {
@@ -80,7 +84,7 @@ async function detectIntent(message) {
           {
             role: "system",
             content:
-              "حدد النية بكلمة واحدة: greeting, tracking, return_create, unknown"
+              "حدد النية بكلمة واحدة فقط من: greeting, tracking, return_create, unknown"
           },
           { role: "user", content: message }
         ]
@@ -88,7 +92,6 @@ async function detectIntent(message) {
     });
 
     const data = await res.json();
-
     return data?.choices?.[0]?.message?.content?.trim().toLowerCase();
 
   } catch {
@@ -111,13 +114,17 @@ export default async function handler(req, res) {
     let session = sessions.get(sessionId) || {
       name: null,
       phone: null,
-      address: null
+      address: null,
+      intent: null // 👈 أهم إضافة
     };
 
-    // 🧠 AI
+    // ========================
+    // 🧠 Detect Intent
+    // ========================
+
     let intent = await detectIntent(message);
 
-    // 💡 FALLBACK لو AI فشل
+    // fallback
     if (!intent || intent === "fallback") {
       if (isGreeting(message)) intent = "greeting";
       else if (isTracking(message)) intent = "tracking";
@@ -125,6 +132,12 @@ export default async function handler(req, res) {
       else intent = "unknown";
     }
 
+    // 👇 خزّن النية (مرة واحدة)
+    if (!session.intent && intent !== "greeting" && intent !== "unknown") {
+      session.intent = intent;
+    }
+
+    // 👇 استخرج البيانات بعد ما النية تتحدد
     extractData(message, session);
 
     let reply = "";
@@ -133,20 +146,22 @@ export default async function handler(req, res) {
     // 🎯 Logic
     // ========================
 
-    if (intent === "greeting") {
-      reply = session.name
-        ? "وعليكم السلام 👋"
-        : "وعليكم السلام 👋 اقدر اساعدك ازاي؟";
+    // 👋 ترحيب فقط
+    if (!session.intent) {
+      reply = "وعليكم السلام 👋\nتقدر تختار:\n📦 متابعة أوردر\n↩️ إرجاع أوردر";
     }
 
-    else if (intent === "tracking") {
-      reply = "تمام 👌 خلينا نتابع الأوردر بتاعك";
+    // 📦 متابعة
+    else if (session.intent === "tracking") {
+      reply = "تمام 👌 هنساعدك في متابعة الأوردر";
     }
 
-    else if (intent === "return_create") {
-      reply = `تقدر تعمل إرجاع من هنا 👇
-https://www.noon.com`;
-      return res.status(200).json({ reply });
+    // ↩️ إرجاع (مباشر)
+    else if (session.intent === "return_create") {
+      return res.status(200).json({
+        reply: `تقدر تعمل إرجاع من هنا 👇
+https://www.noon.com`
+      });
     }
 
     else {
@@ -154,32 +169,36 @@ https://www.noon.com`;
     }
 
     // ========================
-    // 📌 Flow
+    // 📌 Flow (بعد تحديد النية فقط)
     // ========================
 
-    if (!session.name) {
-      reply += "\nممكن الاسم اللي متسجل بيه الاوردر كامل؟";
+    if (session.intent === "tracking") {
+
+      if (!session.name) {
+        reply += "\nممكن الاسم اللي متسجل بيه الأوردر؟";
+      }
+
+      else if (!session.phone) {
+        reply += `\nتمام يا ${session.name} 👌 ممكن رقم تليفونك؟`;
+      }
+
+      else if (!session.address) {
+        reply += "\nممتاز 👍 ممكن العنوان بالتفصيل؟";
+      }
+
+      else {
+        reply += `\nتمام يا ${session.name} 👌 تم تسجيل البيانات والمندوب هيتواصل معاك 🚚`;
+      }
     }
 
-    else if (!session.phone) {
-      reply += `\nتمام يا ${session.name} 👌 رقمك؟`;
-    }
-
-    else if (!session.address) {
-      reply += "\nالعنوان بالتفصيل؟";
-    }
-
-    else {
-      reply += `\nتمام يا ${session.name} 👌 المندوب هيتواصل معاك 🚚`;
-    }
-
+    // 💾 Save
     sessions.set(sessionId, session);
 
     return res.status(200).json({ reply });
 
   } catch (err) {
     return res.status(200).json({
-      reply: "السيستم ضغط شوية دلوقتي 😅 حاول تاني"
+      reply: "السيستم ضغط شوية 😅 حاول تاني"
     });
   }
 }
