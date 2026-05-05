@@ -133,7 +133,7 @@ export default async function handler(req, res) {
       reply = `تقدر تعمل طلب إرجاع بسهولة من خلال تطبيق أو موقع نون 👍
 
 من هنا 👇
-https://www.noon.com/`;
+https://www.noon.com`;
     }
 
     else if (intent === "return_status") {
@@ -171,7 +171,7 @@ https://www.noon.com/`;
       }
 
       else if (session.name && session.phone && session.address) {
-        reply += `\nتمام كده يا ${session.name} 👌 تم تأكيد البيانات والمندوب في الطريق 🚚`;
+        reply += `\nتمام كده يا ${session.name} 👌 تم تأكيد البيانات والمندوب هيتواصل مع حضرتك في اقرب وقت ممكن 🚚`;
       }
     }
 
