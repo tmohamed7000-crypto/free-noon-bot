@@ -1,7 +1,7 @@
 const sessions = new Map();
 
 // ========================
-// 🧠 Helpers
+// 🧠 Helper Functions
 // ========================
 
 function normalize(text) {
@@ -25,29 +25,29 @@ function isLikelyName(text) {
 }
 
 // ========================
-// 🧠 Extract Data
+// 🧠 Extract Data (ذكي)
 // ========================
 
 function extractData(text, session) {
   const clean = normalize(text);
 
-  // تجاهل تكرار نفس الاسم
+  // ❌ تجاهل تكرار نفس الاسم
   if (session.name && normalize(session.name) === clean) return;
 
-  // اسم
+  // ✅ اسم
   if (!session.name && isLikelyName(text)) {
     session.name = text;
     return;
   }
 
-  // رقم
+  // ✅ رقم
   const phoneMatch = text.match(/01\d{9}/);
   if (phoneMatch && !session.phone) {
     session.phone = phoneMatch[0];
     return;
   }
 
-  // عنوان
+  // ✅ عنوان (بشروط)
   if (
     session.phone &&
     !session.address &&
@@ -59,7 +59,7 @@ function extractData(text, session) {
 }
 
 // ========================
-// 🧠 AI Intent Detection + Fallback
+// 🧠 AI Intent Detection
 // ========================
 
 async function detectIntent(message) {
@@ -75,7 +75,11 @@ async function detectIntent(message) {
         messages: [
           {
             role: "system",
-            content: "حدد النية بكلمة واحدة فقط: greeting, tracking, return_create, return_status, return_policy, unknown"
+            content: `
+حدد النية بكلمة واحدة فقط:
+greeting, tracking, return_create, return_status, return_policy, unknown
+بدون شرح
+`
           },
           { role: "user", content: message }
         ]
@@ -94,24 +98,15 @@ async function detectIntent(message) {
       "return_policy"
     ];
 
-    if (allowed.includes(intent)) return intent;
+    return allowed.includes(intent) ? intent : "unknown";
 
-  } catch (e) {
-    console.log("AI Error:", e);
+  } catch {
+    return "unknown";
   }
-
-  // 🔥 Fallback ذكي (مهم جداً)
-  const msg = normalize(message);
-
-  if (isGreeting(msg)) return "greeting";
-  if (msg.includes("ارجاع") || msg.includes("مرتجع")) return "return_create";
-  if (msg.includes("امتى") || msg.includes("وصل") || msg.includes("توصيل")) return "tracking";
-
-  return "unknown";
 }
 
 // ========================
-// 🚀 Handler
+// 🚀 API Handler
 // ========================
 
 export default async function handler(req, res) {
@@ -128,8 +123,10 @@ export default async function handler(req, res) {
       address: null
     };
 
+    // 🧠 Detect intent
     const intent = await detectIntent(message);
 
+    // 🧠 Extract data
     extractData(message, session);
 
     let reply = "";
@@ -154,7 +151,7 @@ https://www.noon.com`
     }
 
     else if (intent === "return_status") {
-      reply = "لو وصلك رسالة من نون على واتساب، ده معناه إن المندوب في الطريق يستلم الأوردر 🚚";
+      reply = "لو وصلك رسالة من نون على واتساب، ده معناه إن المندوب في الطريق ليك يستلم الأوردر 🚚";
     }
 
     else if (intent === "return_policy") {
@@ -162,7 +159,7 @@ https://www.noon.com`
     }
 
     else if (intent === "tracking") {
-      reply = "لو وصلك رسالة من نون على واتساب، ده معناه إن الأوردر في الطريق ليك 🚚";
+      reply = "لو وصلك رسالة من نون على واتساب، ده معناه إن الأوردر خرج من المخزن وهو في الطريق ليك 🚚";
     }
 
     else {
@@ -170,35 +167,40 @@ https://www.noon.com`
     }
 
     // ========================
-    // 📌 Smart Flow
+    // 📌 Smart Flow (بدون غباء 😏)
     // ========================
 
-    // اسم
+    // ❌ لو المستخدم كرر نفس الحاجة → اسكت
+    if (normalize(message) === normalize(session.name)) {
+      return res.status(200).json({ reply: "" });
+    }
+
+    // ✅ اسم
     if (!session.name) {
       reply += "\nممكن الاسم المسجل عليه الأوردر؟";
     }
 
-    // رقم
-    else if (!session.phone) {
+    // ✅ رقم
+    else if (session.name && !session.phone && !/01\d{9}/.test(message)) {
       reply += `\nتمام يا ${session.name} 👌 ممكن رقم تليفونك؟`;
     }
 
-    // عنوان
-    else if (!session.address) {
+    // ✅ عنوان
+    else if (session.phone && !session.address) {
       reply += "\nممتاز 👍 ممكن العنوان بالتفصيل؟";
     }
 
-    // تأكيد
-    else {
+    // ✅ تأكيد
+    else if (session.name && session.phone && session.address) {
       reply += `\nتمام كده يا ${session.name} 👌 تم تأكيد البيانات والمندوب هيتواصل معاك قريب 🚚`;
     }
 
+    // 💾 Save
     sessions.set(sessionId, session);
 
     return res.status(200).json({ reply });
 
   } catch (err) {
-    console.error("SERVER ERROR:", err);
     return res.status(200).json({ reply: "في مشكلة في السيرفر 😅" });
   }
 }
