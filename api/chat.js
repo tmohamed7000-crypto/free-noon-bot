@@ -1,155 +1,107 @@
+const sessions = new Map();
+
+function extractData(text, session) {
+  // اسم (بدائي)
+  if (!session.name && text.length < 30 && !text.match(/\d/)) {
+    session.name = text;
+  }
+
+  // رقم
+  const phoneMatch = text.match(/01\d{9}/);
+  if (phoneMatch) {
+    session.phone = phoneMatch[0];
+  }
+
+  // عنوان
+  if (session.phone && !session.address && text.length > 5) {
+    session.address = text;
+  }
+}
+
 export default async function handler(req, res) {
   try {
-    const { message, history = [] } = req.body;
+    const { message, sessionId = "default" } = req.body;
 
     if (!message) {
-      return res.status(200).json({ reply: "من فضلك اكتب رسالة 😊" });
+      return res.status(200).json({ reply: "اكتب رسالة الأول 😊" });
     }
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "openai/gpt-3.5-turbo",
-        messages: [
-          {
-            role: "system",
-            content: `أنت "عبدالرحمن" مساعد خدمة عملاء لشركة نون متخصص في متابعة الشحنات والاسترجاع.
+    // 📌 استرجاع أو إنشاء session
+    let session = sessions.get(sessionId) || {
+      history: [],
+      name: null,
+      phone: null,
+      address: null
+    };
 
-🎯 هدفك:
-- مساعدة العميل
-- جمع (الاسم - رقم الهاتف - العنوان) فقط عند الحاجة
+    // 🧠 استخراج البيانات
+    extractData(message, session);
 
-========================
-🧠 THINK FIRST (مهم جدًا)
-========================
+    // 🧠 تحديد النية
+    const text = message.toLowerCase();
 
-قبل ما ترد، اعمل الخطوات دي في دماغك:
+    let intent = "unknown";
 
-1) افهم نية المستخدم (هو عايز ايه؟)
-2) حدد المرحلة (لسه بيبدأ؟ ولا في النص؟)
-3) قرر هل تحتاج تجمع بيانات ولا لا
-4) بعد كده بس اكتب الرد
+    if (text.match(/السلام|اهلا|hi|hello/)) intent = "greeting";
+    else if (text.match(/ارجع|إرجاع|مرتجع/)) {
+      if (text.match(/عملت|سجلت/)) intent = "return_status";
+      else intent = "return_create";
+    }
+    else if (text.match(/امتى|فين|وصل|توصيل/)) intent = "tracking";
 
-⚠️ لا تُظهر الخطوات دي في الرد
+    let reply = "";
 
-========================
-🧠 INTENTS
-========================
+    // 🎯 الردود
+    if (intent === "greeting") {
+      reply = "وعليكم السلام 👋 تحب تتابع أوردر ولا عندك استفسار؟";
+    }
 
-صنّف الرسالة لأقرب نية:
-
-1) TRACKING → (فين الأوردر / هيوصل امتى)
-2) RETURN_CREATE → (عايز أرجع / اعمل إرجاع)
-3) RETURN_STATUS → (عملت إرجاع / المندوب هييجي امتى)
-4) RETURN_POLICY → (مدة / شروط الإرجاع)
-5) UNKNOWN → (مش واضح)
-
-========================
-🎯 DECISION RULES
-========================
-
-🔴 RETURN_CREATE:
-→ دورك هنا إرشادي فقط (مش تجمع بيانات)
-→ رد:
-
-"تقدر تعمل طلب إرجاع بسهولة من خلال تطبيق أو موقع نون من صفحة طلباتك 👍
+    else if (intent === "return_create") {
+      reply = `تقدر تعمل طلب إرجاع بسهولة من خلال تطبيق أو موقع نون 👍
 
 من هنا 👇
-https://www.noon.com"
+https://www.noon.com`;
+    }
 
-→ توقف (لا تسأل أي سؤال)
+    else if (intent === "return_status") {
+      reply = "لو وصلك رسالة من نون على واتساب، ده معناه إن المندوب في الطريق ليك يستلم الأوردر 🚚";
 
-------------------------
+      if (!session.name) {
+        reply += "\nممكن الاسم المسجل عليه الأوردر؟";
+      }
+    }
 
-🟡 RETURN_STATUS:
-→ رد:
+    else if (intent === "tracking") {
+      reply = "لو وصلك رسالة من نون على واتساب، ده معناه إن الأوردر خرج من المخزن وهو في الطريق ليك 🚚";
 
-"لو وصلك رسالة من نون على واتساب، ده معناه إن المندوب في الطريق ليك يستلم الأوردر 🚚"
+      if (!session.name) {
+        reply += "\nممكن الاسم المسجل عليه الأوردر؟";
+      }
+    }
 
-→ ثم ممكن تبدأ تجمع بيانات
+    else {
+      reply = "ممكن توضح قصدك أكتر؟";
+    }
 
-------------------------
+    // 📌 flow البيانات
+    if (intent !== "return_create") {
+      if (session.name && !session.phone) {
+        reply = `تمام يا ${session.name} 👌 ممكن رقم تليفونك؟`;
+      }
+      else if (session.phone && !session.address) {
+        reply = "ممتاز 👍 ممكن العنوان بالتفصيل؟";
+      }
+      else if (session.name && session.phone && session.address) {
+        reply = `تمام كده يا ${session.name} 👌 تم تأكيد البيانات والمندوب في الطريق 🚚`;
+      }
+    }
 
-🟢 TRACKING:
-→ رد:
-
-"لو وصلك رسالة من نون على واتساب، ده معناه إن الأوردر خرج من المخزن وهو في الطريق ليك 🚚 والمندوب اتحرك بالفعل."
-
-→ ثم:
-"ممكن الاسم المسجل عليه الأوردر؟"
-
-------------------------
-
-🔵 RETURN_POLICY:
-→ رد مختصر:
-"الإرجاع متاح خلال فترة محددة حسب المنتج وبيتم من خلال التطبيق أو الموقع 👍"
-
-→ ثم كمل flow لو مناسب
-
-------------------------
-
-⚪ UNKNOWN:
-→ "ممكن توضح قصدك أكتر؟"
-
-========================
-📌 DATA COLLECTION (ذكي)
-========================
-
-اجمع البيانات فقط لو:
-- الحالة Tracking أو Return Status
-
-ولا تجمعها في:
-- Return Create
-
-========================
-💬 الأسلوب
-========================
-
-- مصري طبيعي جدًا
-- سطر أو سطرين
-- بدون تكرار
-- بدون تحية في النص
-- استخدم اسم العميل مرة واحدة فقط
-
-========================
-🔁 التصحيح
-========================
-
-لو المستخدم عدل معلومة:
-→ حدّثها وكمل عادي
-
-========================
-🚫 مهم جدًا
-========================
-
-- ما تخلطش بين الحالات
-- ما تمشيش Flow بشكل أعمى
-- افهم الأول… بعدين رد `
-          },
-
-          ...history,
-
-          {
-            role: "user",
-            content: message
-          }
-        ]
-      })
-    });
-
-    const data = await response.json();
-
-    const reply =
-      data?.choices?.[0]?.message?.content ||
-      "حصل مشكلة 😅";
+    // 💾 حفظ session
+    sessions.set(sessionId, session);
 
     res.status(200).json({ reply });
 
   } catch (err) {
-    res.status(200).json({ reply: "في مشكلة في السيرفر 😅" });
+    res.status(200).json({ reply: "في مشكلة حصلت 😅" });
   }
 }
