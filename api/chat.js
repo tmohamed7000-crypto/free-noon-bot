@@ -1,69 +1,86 @@
 const sessions = new Map();
 
 // ========================
-// 🧠 Helper Functions
+// 🧠 Helpers
 // ========================
+
+function normalize(text) {
+  return text.trim().toLowerCase();
+}
 
 function isGreeting(text) {
   return /السلام|اهلا|hi|hello|مساء|صباح/i.test(text);
+}
+
+function isTracking(text) {
+  return /اتابع|متابعة|اوردر|طلب|فين/i.test(text);
+}
+
+function isReturn(text) {
+  return /ارجاع|ارجع|استرجاع/i.test(text);
 }
 
 function isLikelyName(text) {
   const words = text.trim().split(" ");
 
   if (words.length < 2 || words.length > 3) return false;
-
   if (/\d/.test(text)) return false;
-
   if (isGreeting(text)) return false;
-
   if (/تمام|اوكي|حاضر|ماشي/i.test(text)) return false;
-
   if (text.length < 3 || text.length > 25) return false;
 
   return true;
 }
 
+// ========================
+// 🧠 Extract Data
+// ========================
+
 function extractData(text, session) {
-  // اسم
+  const clean = normalize(text);
+
+  if (session.name && normalize(session.name) === clean) return;
+
   if (!session.name && isLikelyName(text)) {
     session.name = text;
+    return;
   }
 
-  // رقم
   const phoneMatch = text.match(/01\d{9}/);
-  if (phoneMatch) {
+  if (phoneMatch && !session.phone) {
     session.phone = phoneMatch[0];
+    return;
   }
 
-  // عنوان
-  if (session.phone && !session.address && text.length > 5) {
+  if (
+    session.phone &&
+    !session.address &&
+    text.length > 8 &&
+    !isLikelyName(text)
+  ) {
     session.address = text;
   }
 }
 
 // ========================
-// 🧠 AI Intent Detection
+// 🤖 AI Intent (مع حماية)
 // ========================
 
 async function detectIntent(message) {
   try {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const res = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "openai/gpt-4o-mini",
+        model: "deepseek-chat",
         messages: [
           {
             role: "system",
-            content: `
-حدد النية بكلمة واحدة فقط من:
-greeting, tracking, return_create, return_status, return_policy, unknown
-بدون أي شرح
-`
+            content:
+              "حدد النية بكلمة واحدة: greeting, tracking, return_create, unknown"
           },
           { role: "user", content: message }
         ]
@@ -72,27 +89,15 @@ greeting, tracking, return_create, return_status, return_policy, unknown
 
     const data = await res.json();
 
-    let intent = data?.choices?.[0]?.message?.content?.trim().toLowerCase();
-
-    const allowed = [
-      "greeting",
-      "tracking",
-      "return_create",
-      "return_status",
-      "return_policy"
-    ];
-
-    if (!allowed.includes(intent)) return "unknown";
-
-    return intent;
+    return data?.choices?.[0]?.message?.content?.trim().toLowerCase();
 
   } catch {
-    return "unknown";
+    return "fallback";
   }
 }
 
 // ========================
-// 🚀 API Handler
+// 🚀 API
 // ========================
 
 export default async function handler(req, res) {
@@ -109,78 +114,72 @@ export default async function handler(req, res) {
       address: null
     };
 
-    // 🧠 Detect intent
-    const intent = await detectIntent(message);
+    // 🧠 AI
+    let intent = await detectIntent(message);
 
-    // 🧠 Extract data
+    // 💡 FALLBACK لو AI فشل
+    if (!intent || intent === "fallback") {
+      if (isGreeting(message)) intent = "greeting";
+      else if (isTracking(message)) intent = "tracking";
+      else if (isReturn(message)) intent = "return_create";
+      else intent = "unknown";
+    }
+
     extractData(message, session);
 
     let reply = "";
 
     // ========================
-    // 🎯 Intent Logic
+    // 🎯 Logic
     // ========================
 
     if (intent === "greeting") {
-      if (!session.name && !session.phone) {
-        reply = "وعليكم السلام 👋 اقدر اساعد حضرتك ازاي؟";
-      } else {
-        reply = "وعليكم السلام 👋";
-      }
-    }
-
-    else if (intent === "return_create") {
-      reply = `تقدر تعمل طلب إرجاع بسهولة من خلال تطبيق أو موقع نون 👍
-
-من هنا 👇
-https://www.noon.com/`;
-    }
-
-    else if (intent === "return_status") {
-      reply = "لو وصلك رسالة من نون على واتساب، ده معناه إن المندوب في الطريق ليك يستلم الأوردر 🚚";
-    }
-
-    else if (intent === "return_policy") {
-      reply = "الإرجاع بيكون خلال فترة حسب المنتج، وغالبًا المندوب بييجي خلال يوم أو يومين 👍";
+      reply = session.name
+        ? "وعليكم السلام 👋"
+        : "وعليكم السلام 👋 اقدر اساعدك ازاي؟";
     }
 
     else if (intent === "tracking") {
-      reply = "لو وصلك رسالة من نون على واتساب، ده معناه إن الأوردر خرج من المخزن وهو في الطريق ليك 🚚";
+      reply = "تمام 👌 خلينا نتابع الأوردر بتاعك";
+    }
+
+    else if (intent === "return_create") {
+      reply = `تقدر تعمل إرجاع من هنا 👇
+https://www.noon.com`;
+      return res.status(200).json({ reply });
     }
 
     else {
-      reply = "مش فاهمك قوي 🤔 تقصد متابعة أوردر ولا إرجاع؟";
+      reply = "تقصد متابعة أوردر ولا إرجاع؟ 🤔";
     }
 
     // ========================
-    // 📌 Smart Data Flow
+    // 📌 Flow
     // ========================
 
-    if (intent !== "return_create" && intent !== "greeting") {
-
-      if (!session.name) {
-        reply += "\nممكن الاسم المسجل عليه الأوردر؟";
-      }
-
-      else if (session.name && !session.phone) {
-        reply += `\nتمام يا ${session.name} 👌 ممكن رقم تليفونك؟`;
-      }
-
-      else if (session.phone && !session.address) {
-        reply += "\nممتاز 👍 ممكن العنوان بالتفصيل؟";
-      }
-
-      else if (session.name && session.phone && session.address) {
-        reply += `\nتمام كده يا ${session.name} 👌 تم تأكيد البيانات والمندوب في الطريق 🚚`;
-      }
+    if (!session.name) {
+      reply += "\nممكن الاسم؟";
     }
 
-    // 💾 Save session
+    else if (!session.phone) {
+      reply += `\nتمام يا ${session.name} 👌 رقمك؟`;
+    }
+
+    else if (!session.address) {
+      reply += "\nالعنوان بالتفصيل؟";
+    }
+
+    else {
+      reply += `\nتمام يا ${session.name} 👌 المندوب هيتواصل معاك 🚚`;
+    }
+
     sessions.set(sessionId, session);
 
     return res.status(200).json({ reply });
 
   } catch (err) {
-    return res.status(200).json({ reply: "في مشكلة في السيرفر 😅" });
+    return res.status(200).json({
+      reply: "السيستم ضغط شوية دلوقتي 😅 حاول تاني"
+    });
   }
 }
