@@ -9,7 +9,7 @@ function normalize(text) {
 }
 
 function isGreeting(text) {
-  return /السلام|اهلا|hi|hello|مساء|صباح/i.test(text);
+  return /السلام|اهلا|hi|hello|مرحبا|مساء|صباح/i.test(text);
 }
 
 function isTracking(text) {
@@ -22,13 +22,11 @@ function isReturn(text) {
 
 function isLikelyName(text) {
   const words = text.trim().split(" ");
-
   if (words.length < 2 || words.length > 3) return false;
   if (/\d/.test(text)) return false;
   if (isGreeting(text)) return false;
   if (/تمام|اوكي|حاضر|ماشي/i.test(text)) return false;
   if (text.length < 3 || text.length > 25) return false;
-
   return true;
 }
 
@@ -63,11 +61,13 @@ function extractData(text, session) {
 }
 
 // ========================
-// 🤖 AI Intent (مع حماية)
+// 🤖 AI (اختياري)
 // ========================
 
 async function detectIntent(message) {
   try {
+    if (!process.env.DEEPSEEK_API_KEY) return "fallback";
+
     const res = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
       headers: {
@@ -88,7 +88,6 @@ async function detectIntent(message) {
     });
 
     const data = await res.json();
-
     return data?.choices?.[0]?.message?.content?.trim().toLowerCase();
 
   } catch {
@@ -102,59 +101,72 @@ async function detectIntent(message) {
 
 export default async function handler(req, res) {
   try {
-    const { message, sessionId = "default" } = req.body;
+    const { message, intent: manualIntent, sessionId = "default" } = req.body;
 
-    if (!message) {
+    if (!message && !manualIntent) {
       return res.status(200).json({ reply: "اكتب رسالة 😊" });
     }
 
     let session = sessions.get(sessionId) || {
       name: null,
       phone: null,
-      address: null
+      address: null,
+      intentChosen: false,
+      intent: null
     };
 
-    // 🧠 AI
-    let intent = await detectIntent(message);
+    let intent = manualIntent || null;
 
-    // 💡 FALLBACK لو AI فشل
-    if (!intent || intent === "fallback") {
-      if (isGreeting(message)) intent = "greeting";
-      else if (isTracking(message)) intent = "tracking";
-      else if (isReturn(message)) intent = "return_create";
-      else intent = "unknown";
+    // 🧠 لو مفيش intent من الزر
+    if (!intent) {
+      intent = await detectIntent(message);
+
+      if (!intent || intent === "fallback") {
+        if (isGreeting(message)) intent = "greeting";
+        else if (isTracking(message)) intent = "tracking";
+        else if (isReturn(message)) intent = "return_create";
+        else intent = "unknown";
+      }
     }
 
-    extractData(message, session);
+    // ✅ حفظ الاختيار
+    if (intent === "tracking" || intent === "return_create") {
+      session.intentChosen = true;
+      session.intent = intent;
+    }
+
+    // ========================
+    // 🎯 قبل الاختيار → اعرض أزرار
+    // ========================
+
+    if (!session.intentChosen) {
+      return res.status(200).json({
+        reply: "اختار الخدمة 👇",
+        buttons: [
+          { text: "📦 متابعة أوردر", value: "tracking" },
+          { text: "🔄 إرجاع منتج", value: "return_create" }
+        ]
+      });
+    }
+
+    // ========================
+    // 📌 بعد الاختيار
+    // ========================
+
+    extractData(message || "", session);
 
     let reply = "";
 
-    // ========================
-    // 🎯 Logic
-    // ========================
-
-    if (intent === "greeting") {
-      reply = session.name
-        ? "وعليكم السلام 👋"
-        : "وعليكم السلام 👋 اقدر اساعدك ازاي؟";
-    }
-
-    else if (intent === "tracking") {
+    if (session.intent === "tracking") {
       reply = "تمام 👌 خلينا نتابع الأوردر بتاعك";
     }
 
-    else if (intent === "return_create") {
-      reply = `تقدر تعمل إرجاع من هنا 👇
-https://www.noon.com`;
-      return res.status(200).json({ reply });
-    }
-
-    else {
-      reply = "تقصد متابعة أوردر ولا إرجاع؟ 🤔";
+    else if (session.intent === "return_create") {
+      reply = "تمام 👌 هنساعدك في الإرجاع";
     }
 
     // ========================
-    // 📌 Flow
+    // 🧠 Data Flow
     // ========================
 
     if (!session.name) {
@@ -177,9 +189,9 @@ https://www.noon.com`;
 
     return res.status(200).json({ reply });
 
-  } catch (err) {
+  } catch {
     return res.status(200).json({
-      reply: "السيستم ضغط شوية دلوقتي 😅 حاول تاني"
+      reply: "السيستم ضغط شوية 😅 حاول تاني"
     });
   }
 }
