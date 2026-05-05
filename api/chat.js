@@ -55,41 +55,41 @@ function extractData(text, session) {
 }
 
 // ========================
-// 🧠 Fallback Intent
+// 🧠 Fallback Intent (بدون AI)
 // ========================
 
-function fallbackIntent(message) {
-  const msg = normalize(message);
+function detectIntentLocal(message) {
+  const text = normalize(message);
 
-  if (isGreeting(msg)) return "greeting";
-  if (msg.includes("ارجاع") || msg.includes("مرتجع")) return "return_create";
-  if (msg.includes("امتى") || msg.includes("وصل") || msg.includes("توصيل")) return "tracking";
+  if (/السلام|اهلا|hello|hi/.test(text)) return "greeting";
+  if (/ارجاع|استرجاع|return/.test(text)) return "return_create";
+  if (/اوردر|طلب|شحنة|track|delivery/.test(text)) return "tracking";
 
   return "unknown";
 }
 
 // ========================
-// 🧠 AI Intent Detection (SAFE)
+// 🧠 DeepSeek Intent
 // ========================
 
-async function detectIntent(message) {
+async function detectIntentAI(message) {
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000); // ⏱️ 3 ثواني
+    const timeout = setTimeout(() => controller.abort(), 2500); // ⏱️ مهم
 
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const res = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY}`,
         "Content-Type": "application/json"
       },
       signal: controller.signal,
       body: JSON.stringify({
-        model: "openai/gpt-4o-mini",
+        model: "deepseek-chat",
         messages: [
           {
             role: "system",
-            content: "حدد النية: greeting, tracking, return_create, return_status, return_policy"
+            content: "حدد النية بكلمة واحدة: greeting, tracking, return_create, return_status, return_policy"
           },
           { role: "user", content: message }
         ]
@@ -99,7 +99,6 @@ async function detectIntent(message) {
     clearTimeout(timeout);
 
     const data = await res.json();
-
     let intent = data?.choices?.[0]?.message?.content?.trim().toLowerCase();
 
     const allowed = [
@@ -112,11 +111,11 @@ async function detectIntent(message) {
 
     return allowed.includes(intent) ? intent : "unknown";
 
-  } catch (err) {
-    console.log("AI Timeout or Error:", err);
-    return "unknown"; // 🔥 fallback مهم جدا
+  } catch {
+    return "unknown";
   }
 }
+
 // ========================
 // 🚀 Handler
 // ========================
@@ -135,14 +134,21 @@ export default async function handler(req, res) {
       address: null
     };
 
-    const intent = await detectIntent(message);
+    // 🧠 أول حاجة: حاول local
+    let intent = detectIntentLocal(message);
 
+    // 🧠 لو مش واضح → استخدم AI
+    if (intent === "unknown") {
+      intent = await detectIntentAI(message);
+    }
+
+    // 🧠 Extract
     extractData(message, session);
 
     let reply = "";
 
     // ========================
-    // 🎯 Intent Logic
+    // 🎯 الردود
     // ========================
 
     if (intent === "greeting") {
@@ -153,31 +159,22 @@ export default async function handler(req, res) {
 
     else if (intent === "return_create") {
       return res.status(200).json({
-        reply: `تقدر تعمل طلب إرجاع بسهولة من خلال تطبيق أو موقع نون 👍
+        reply: `تقدر تعمل طلب إرجاع بسهولة من خلال موقع نون 👍
 
-من هنا 👇
 https://www.noon.com`
       });
     }
 
-    else if (intent === "return_status") {
-      reply = "لو وصلك رسالة من نون على واتساب، ده معناه إن المندوب في الطريق يستلم الأوردر 🚚";
-    }
-
-    else if (intent === "return_policy") {
-      reply = "الإرجاع بيكون خلال فترة حسب المنتج، وغالبًا المندوب بييجي خلال يوم أو يومين 👍";
-    }
-
     else if (intent === "tracking") {
-      reply = "لو وصلك رسالة من نون على واتساب، ده معناه إن الأوردر في الطريق ليك 🚚";
+      reply = "تمام 👌 عايز تتابع الأوردر";
     }
 
     else {
-      reply = "تقصد متابعة أوردر ولا إرجاع؟ 🤔";
+      reply = "ممكن توضح أكتر؟ تقصد متابعة أوردر ولا إرجاع؟ 🤔";
     }
 
     // ========================
-    // 📌 Smart Flow
+    // 📌 Flow ذكي
     // ========================
 
     if (normalize(message) === normalize(session.name)) {
@@ -188,15 +185,15 @@ https://www.noon.com`
       reply += "\nممكن الاسم المسجل عليه الأوردر؟";
     }
 
-    else if (!session.phone) {
+    else if (session.name && !session.phone && !/01\d{9}/.test(message)) {
       reply += `\nتمام يا ${session.name} 👌 ممكن رقم تليفونك؟`;
     }
 
-    else if (!session.address) {
+    else if (session.phone && !session.address) {
       reply += "\nممتاز 👍 ممكن العنوان بالتفصيل؟";
     }
 
-    else {
+    else if (session.name && session.phone && session.address) {
       reply += `\nتمام كده يا ${session.name} 👌 تم تأكيد البيانات والمندوب هيتواصل معاك قريب 🚚`;
     }
 
@@ -205,10 +202,6 @@ https://www.noon.com`
     return res.status(200).json({ reply });
 
   } catch (err) {
-    console.error("SERVER ERROR:", err);
-
-    return res.status(200).json({
-      reply: "حصل تأخير بسيط 😅 ممكن تقولّي عايز متابعة أوردر ولا إرجاع؟"
-    });
+    return res.status(200).json({ reply: "في مشكلة في السيرفر 😅" });
   }
 }
