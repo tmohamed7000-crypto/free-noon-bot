@@ -1,12 +1,8 @@
 const sessions = new Map();
 
 // ========================
-// 🧠 Helpers
+// 🧠 Helper Functions
 // ========================
-
-function normalize(text) {
-  return text.trim().toLowerCase();
-}
 
 function isGreeting(text) {
   return /السلام|اهلا|hi|hello|مساء|صباح/i.test(text);
@@ -16,89 +12,66 @@ function isLikelyName(text) {
   const words = text.trim().split(" ");
 
   if (words.length < 2 || words.length > 3) return false;
+
   if (/\d/.test(text)) return false;
+
   if (isGreeting(text)) return false;
+
   if (/تمام|اوكي|حاضر|ماشي/i.test(text)) return false;
+
   if (text.length < 3 || text.length > 25) return false;
 
   return true;
 }
 
-// ========================
-// 🧠 Extract Data
-// ========================
-
 function extractData(text, session) {
-  const clean = normalize(text);
-
-  if (session.name && normalize(session.name) === clean) return;
-
+  // اسم
   if (!session.name && isLikelyName(text)) {
     session.name = text;
-    return;
   }
 
+  // رقم
   const phoneMatch = text.match(/01\d{9}/);
-  if (phoneMatch && !session.phone) {
+  if (phoneMatch) {
     session.phone = phoneMatch[0];
-    return;
   }
 
-  if (
-    session.phone &&
-    !session.address &&
-    text.length > 8 &&
-    !isLikelyName(text)
-  ) {
+  // عنوان
+  if (session.phone && !session.address && text.length > 5) {
     session.address = text;
   }
 }
 
 // ========================
-// 🧠 Fallback Intent (بدون AI)
+// 🧠 AI Intent Detection
 // ========================
 
-function detectIntentLocal(message) {
-  const text = normalize(message);
-
-  if (/السلام|اهلا|hello|hi/.test(text)) return "greeting";
-  if (/ارجاع|استرجاع|return/.test(text)) return "return_create";
-  if (/اوردر|طلب|شحنة|track|delivery/.test(text)) return "tracking";
-
-  return "unknown";
-}
-
-// ========================
-// 🧠 DeepSeek Intent
-// ========================
-
-async function detectIntentAI(message) {
+async function detectIntent(message) {
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2500); // ⏱️ مهم
-
-    const res = await fetch("https://api.deepseek.com/chat/completions", {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
         "Content-Type": "application/json"
       },
-      signal: controller.signal,
       body: JSON.stringify({
-        model: "deepseek-chat",
+        model: "openai/gpt-4o-mini",
         messages: [
           {
             role: "system",
-            content: "حدد النية بكلمة واحدة: greeting, tracking, return_create, return_status, return_policy"
+            content: `
+حدد النية بكلمة واحدة فقط من:
+greeting, tracking, return_create, return_status, return_policy, unknown
+بدون أي شرح
+`
           },
           { role: "user", content: message }
         ]
       })
     });
 
-    clearTimeout(timeout);
-
     const data = await res.json();
+
     let intent = data?.choices?.[0]?.message?.content?.trim().toLowerCase();
 
     const allowed = [
@@ -109,7 +82,9 @@ async function detectIntentAI(message) {
       "return_policy"
     ];
 
-    return allowed.includes(intent) ? intent : "unknown";
+    if (!allowed.includes(intent)) return "unknown";
+
+    return intent;
 
   } catch {
     return "unknown";
@@ -117,7 +92,7 @@ async function detectIntentAI(message) {
 }
 
 // ========================
-// 🚀 Handler
+// 🚀 API Handler
 // ========================
 
 export default async function handler(req, res) {
@@ -134,69 +109,73 @@ export default async function handler(req, res) {
       address: null
     };
 
-    // 🧠 أول حاجة: حاول local
-    let intent = detectIntentLocal(message);
+    // 🧠 Detect intent
+    const intent = await detectIntent(message);
 
-    // 🧠 لو مش واضح → استخدم AI
-    if (intent === "unknown") {
-      intent = await detectIntentAI(message);
-    }
-
-    // 🧠 Extract
+    // 🧠 Extract data
     extractData(message, session);
 
     let reply = "";
 
     // ========================
-    // 🎯 الردود
+    // 🎯 Intent Logic
     // ========================
 
     if (intent === "greeting") {
-      reply = session.name
-        ? "وعليكم السلام 👋"
-        : "وعليكم السلام 👋 اقدر اساعدك ازاي؟";
+      if (!session.name && !session.phone) {
+        reply = "وعليكم السلام 👋 اقدر اساعد حضرتك ازاي؟";
+      } else {
+        reply = "وعليكم السلام 👋";
+      }
     }
 
     else if (intent === "return_create") {
-      return res.status(200).json({
-        reply: `تقدر تعمل طلب إرجاع بسهولة من خلال موقع نون 👍
+      reply = `تقدر تعمل طلب إرجاع بسهولة من خلال تطبيق أو موقع نون 👍
 
-https://www.noon.com`
-      });
+من هنا 👇
+https://www.noon.com/`;
+    }
+
+    else if (intent === "return_status") {
+      reply = "لو وصلك رسالة من نون على واتساب، ده معناه إن المندوب في الطريق ليك يستلم الأوردر 🚚";
+    }
+
+    else if (intent === "return_policy") {
+      reply = "الإرجاع بيكون خلال فترة حسب المنتج، وغالبًا المندوب بييجي خلال يوم أو يومين 👍";
     }
 
     else if (intent === "tracking") {
-      reply = "تمام 👌 عايز تتابع الأوردر";
+      reply = "لو وصلك رسالة من نون على واتساب، ده معناه إن الأوردر خرج من المخزن وهو في الطريق ليك 🚚";
     }
 
     else {
-      reply = "ممكن توضح أكتر؟ تقصد متابعة أوردر ولا إرجاع؟ 🤔";
+      reply = "مش فاهمك قوي 🤔 تقصد متابعة أوردر ولا إرجاع؟";
     }
 
     // ========================
-    // 📌 Flow ذكي
+    // 📌 Smart Data Flow
     // ========================
 
-    if (normalize(message) === normalize(session.name)) {
-      return res.status(200).json({ reply: "" });
+    if (intent !== "return_create" && intent !== "greeting") {
+
+      if (!session.name) {
+        reply += "\nممكن الاسم المسجل عليه الأوردر؟";
+      }
+
+      else if (session.name && !session.phone) {
+        reply += `\nتمام يا ${session.name} 👌 ممكن رقم تليفونك؟`;
+      }
+
+      else if (session.phone && !session.address) {
+        reply += "\nممتاز 👍 ممكن العنوان بالتفصيل؟";
+      }
+
+      else if (session.name && session.phone && session.address) {
+        reply += `\nتمام كده يا ${session.name} 👌 تم تأكيد البيانات والمندوب في الطريق 🚚`;
+      }
     }
 
-    if (!session.name) {
-      reply += "\nممكن الاسم المسجل عليه الأوردر؟";
-    }
-
-    else if (session.name && !session.phone && !/01\d{9}/.test(message)) {
-      reply += `\nتمام يا ${session.name} 👌 ممكن رقم تليفونك؟`;
-    }
-
-    else if (session.phone && !session.address) {
-      reply += "\nممتاز 👍 ممكن العنوان بالتفصيل؟";
-    }
-
-    else if (session.name && session.phone && session.address) {
-      reply += `\nتمام كده يا ${session.name} 👌 تم تأكيد البيانات والمندوب هيتواصل معاك قريب 🚚`;
-    }
-
+    // 💾 Save session
     sessions.set(sessionId, session);
 
     return res.status(200).json({ reply });
