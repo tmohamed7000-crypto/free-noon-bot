@@ -158,7 +158,7 @@ https://www.noon.com`;
     // ========================
 
     if (!session.name) {
-      reply += "\nممكن الاسم؟";
+      reply += "\nممكن الاسم اللي متسجل بيه الاوردر كامل؟";
     }
 
     else if (!session.phone) {
