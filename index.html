@@ -4,189 +4,109 @@
 <meta charset="UTF-8">
 <title>Noon Assistant</title>
 
-<!-- مهم جدًا للموبايل -->
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-
 <style>
-html, body {
-  margin: 0;
-  height: 100%;
-  font-family: Arial;
-  background: #e5ddd5;
-}
-
 body {
-  display: flex;
-  flex-direction: column;
+  font-family: Arial;
+  background: #eee;
 }
 
-/* الهيدر */
-.header {
-  background: #FEE500;
-  padding: 15px;
-  font-weight: bold;
-}
-
-/* الشات */
-.chat {
-  flex: 1;
+#chat {
+  height: 400px;
   overflow-y: auto;
   padding: 10px;
-  display: flex;
-  flex-direction: column;
+  background: #ddd;
 }
 
-/* الرسائل */
-.message {
-  max-width: 75%;
-  margin: 5px;
+.msg {
+  margin: 10px;
   padding: 10px;
   border-radius: 10px;
-  word-wrap: break-word;
+  max-width: 60%;
+}
+
+.user {
+  background: #c8f7c5;
+  margin-left: auto;
 }
 
 .bot {
   background: #fff;
-  align-self: flex-start;
 }
 
-.user {
-  background: #dcf8c6;
-  align-self: flex-end;
-  text-align: right;
-}
-
-/* صندوق الإدخال */
-.inputBox {
-  display: flex;
+#buttons button {
+  margin: 5px;
   padding: 10px;
-  background: #fff;
-  position: sticky;
-  bottom: 0;
-}
-
-input {
-  flex: 1;
-  padding: 12px;
-  font-size: 16px; /* مهم للموبايل */
-  border: 1px solid #ccc;
-  border-radius: 8px;
-}
-
-button {
-  padding: 12px;
-  background: #FEE500;
   border: none;
-  margin-left: 5px;
-  border-radius: 8px;
+  background: orange;
+  color: white;
   cursor: pointer;
+  border-radius: 8px;
 }
 </style>
 </head>
 
 <body>
 
-<div class="header">🚚 Noon Assistant</div>
+<h2>📦 Noon Assistant</h2>
 
-<div class="chat" id="chat"></div>
+<div id="chat"></div>
+<div id="buttons"></div>
 
-<div class="inputBox">
-  <input id="msg" placeholder="اكتب هنا...">
-  <button onclick="send()">إرسال</button>
-</div>
+<input id="input" placeholder="اكتب..." />
+<button onclick="send()">إرسال</button>
 
 <script>
-const chat = document.getElementById("chat");
-
-// session ثابت
-let sessionId = localStorage.getItem("sessionId");
-if (!sessionId) {
-  sessionId = Math.random().toString(36);
-  localStorage.setItem("sessionId", sessionId);
-}
-
-let typingDiv;
-
-// typing
-function showTyping() {
-  typingDiv = document.createElement("div");
-  typingDiv.className = "message bot";
-  const msgs = ["يكتب...", "ثانية بس...", "بشوف لك..."];
-  typingDiv.innerText = msgs[Math.floor(Math.random()*msgs.length)];
-  chat.appendChild(typingDiv);
-  scrollDown();
-}
-
-function removeTyping() {
-  if (typingDiv) typingDiv.remove();
-}
-
-// إضافة رسالة
 function addMessage(text, type) {
   const div = document.createElement("div");
-  div.className = "message " + type;
+  div.className = "msg " + type;
   div.innerText = text;
-  chat.appendChild(div);
-  scrollDown();
+  document.getElementById("chat").appendChild(div);
 }
 
-// نزول تلقائي
-function scrollDown() {
-  chat.scrollTop = chat.scrollHeight;
-}
-
-// delay واقعي
-function getDelay(text) {
-  return Math.min(3000, 700 + text.length * 25);
-}
-
-// إرسال
-function send() {
-  let msg = document.getElementById("msg").value.trim();
-  if (!msg) return;
-
-  addMessage(msg, "user");
-  document.getElementById("msg").value = "";
-
-  showTyping();
-
-  fetch("/api/chat", {
+async function sendMessage(message, intent = null) {
+  const res = await fetch("/api/chat", {
     method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({
-      message: msg,
-      sessionId: sessionId
-    })
-  })
-  .then(res => res.json())
-  .then(data => {
-    const delay = getDelay(data.reply);
-
-    setTimeout(() => {
-      removeTyping();
-      addMessage(data.reply, "bot");
-    }, delay);
-  })
-  .catch(() => {
-    removeTyping();
-    addMessage("حصل خطأ 😅", "bot");
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ message, intent })
   });
+
+  const data = await res.json();
+
+  addMessage(data.reply, "bot");
+
+  const btns = document.getElementById("buttons");
+  btns.innerHTML = "";
+
+  if (data.buttons) {
+    data.buttons.forEach(b => {
+      const btn = document.createElement("button");
+      btn.innerText = b.text;
+
+      btn.onclick = () => {
+        addMessage(b.text, "user");
+        btns.innerHTML = "";
+        sendMessage(b.text, b.value);
+      };
+
+      btns.appendChild(btn);
+    });
+  }
 }
 
-// Enter
-document.getElementById("msg").addEventListener("keydown", e => {
-  if (e.key === "Enter") send();
-});
+function send() {
+  const input = document.getElementById("input");
+  const text = input.value;
 
-// 🔥 حل مشكلة الكيبورد في الموبايل
-window.addEventListener("resize", () => {
-  setTimeout(scrollDown, 100);
-});
+  if (!text) return;
 
-// لما تفتح input ينزل لتحت
-document.getElementById("msg").addEventListener("focus", () => {
-  setTimeout(scrollDown, 300);
-});
+  addMessage(text, "user");
+  input.value = "";
+
+  sendMessage(text);
+}
+
+// أول رسالة
+sendMessage("start");
 </script>
 
 </body>
