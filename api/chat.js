@@ -74,45 +74,33 @@ function fallbackIntent(message) {
 
 async function detectIntent(message) {
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000); // ⏱️ 3 ثواني
+
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
         "Content-Type": "application/json"
       },
+      signal: controller.signal,
       body: JSON.stringify({
         model: "openai/gpt-4o-mini",
         messages: [
           {
             role: "system",
-            content: "حدد النية بكلمة واحدة فقط: greeting, tracking, return_create, return_status, return_policy, unknown"
+            content: "حدد النية: greeting, tracking, return_create, return_status, return_policy"
           },
           { role: "user", content: message }
         ]
       })
     });
 
-    // ❗ لو API رجع error
-    if (!res.ok) {
-      console.log("API STATUS:", res.status);
-      return fallbackIntent(message);
-    }
+    clearTimeout(timeout);
 
-    // ❗ parse آمن
-    const text = await res.text();
+    const data = await res.json();
 
-    if (!text) return fallbackIntent(message);
-
-    let data;
-
-    try {
-      data = JSON.parse(text);
-    } catch {
-      console.log("INVALID JSON:", text);
-      return fallbackIntent(message);
-    }
-
-    const intent = data?.choices?.[0]?.message?.content?.trim().toLowerCase();
+    let intent = data?.choices?.[0]?.message?.content?.trim().toLowerCase();
 
     const allowed = [
       "greeting",
@@ -122,14 +110,13 @@ async function detectIntent(message) {
       "return_policy"
     ];
 
-    return allowed.includes(intent) ? intent : fallbackIntent(message);
+    return allowed.includes(intent) ? intent : "unknown";
 
-  } catch (e) {
-    console.log("AI ERROR:", e);
-    return fallbackIntent(message);
+  } catch (err) {
+    console.log("AI Timeout or Error:", err);
+    return "unknown"; // 🔥 fallback مهم جدا
   }
 }
-
 // ========================
 // 🚀 Handler
 // ========================
