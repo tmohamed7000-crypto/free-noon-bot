@@ -30,7 +30,6 @@ button { padding:10px; background:#FEE500; border:none; }
 <script>
 const chat = document.getElementById("chat");
 
-// 🧠 session id ثابت
 let sessionId = localStorage.getItem("sessionId");
 if (!sessionId) {
   sessionId = Math.random().toString(36);
@@ -42,7 +41,8 @@ let typingDiv;
 function showTyping() {
   typingDiv = document.createElement("div");
   typingDiv.className = "message bot";
-  typingDiv.innerText = "يكتب...";
+  const msgs = ["يكتب...", "ثانية بس...", "بشوف لك..."];
+  typingDiv.innerText = msgs[Math.floor(Math.random()*msgs.length)];
   chat.appendChild(typingDiv);
   chat.scrollTop = chat.scrollHeight;
 }
@@ -60,7 +60,7 @@ function addMessage(text, type) {
 }
 
 function getDelay(text) {
-  return Math.min(3000, 800 + text.length * 20);
+  return Math.min(3000, 700 + text.length * 25);
 }
 
 function send() {
@@ -95,7 +95,6 @@ function send() {
   });
 }
 
-// Enter
 document.getElementById("msg").addEventListener("keydown", e => {
   if (e.key === "Enter") send();
 });
