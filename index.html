@@ -2,74 +2,24 @@
 <html lang="ar">
 <head>
 <meta charset="UTF-8">
-<title>Noon Delivery Assistant</title>
+<title>Noon Assistant</title>
 
 <style>
-body {
-  margin: 0;
-  font-family: Arial;
-  background: #e5ddd5;
-}
-
-.header {
-  background: #FEE500;
-  padding: 15px;
-  font-weight: bold;
-}
-
-.chat {
-  height: 80vh;
-  overflow-y: auto;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-}
-
-.message {
-  max-width: 70%;
-  margin: 5px;
-  padding: 10px;
-  border-radius: 10px;
-}
-
-.bot {
-  background: #fff;
-  align-self: flex-start;
-}
-
-.user {
-  background: #dcf8c6;
-  align-self: flex-end;
-  text-align: right;
-}
-
-.inputBox {
-  display: flex;
-  padding: 10px;
-  background: #fff;
-}
-
-input {
-  flex: 1;
-  padding: 10px;
-  border: 1px solid #ccc;
-}
-
-button {
-  padding: 10px;
-  background: #FEE500;
-  border: none;
-  margin-left: 5px;
-  cursor: pointer;
-}
+body { margin:0; font-family:Arial; background:#e5ddd5; }
+.header { background:#FEE500; padding:15px; font-weight:bold; }
+.chat { height:80vh; overflow-y:auto; padding:10px; display:flex; flex-direction:column; }
+.message { max-width:70%; margin:5px; padding:10px; border-radius:10px; }
+.bot { background:#fff; align-self:flex-start; }
+.user { background:#dcf8c6; align-self:flex-end; text-align:right; }
+.inputBox { display:flex; padding:10px; background:#fff; }
+input { flex:1; padding:10px; }
+button { padding:10px; background:#FEE500; border:none; }
 </style>
-
 </head>
 
 <body>
 
-<div class="header">🚚 Noon Delivery Assistant</div>
-
+<div class="header">🚚 Noon Assistant</div>
 <div class="chat" id="chat"></div>
 
 <div class="inputBox">
@@ -80,27 +30,14 @@ button {
 <script>
 const chat = document.getElementById("chat");
 
-let history = JSON.parse(localStorage.getItem("history") || "[]");
-let loading = false;
+// 🧠 session id ثابت
+let sessionId = localStorage.getItem("sessionId");
+if (!sessionId) {
+  sessionId = Math.random().toString(36);
+  localStorage.setItem("sessionId", sessionId);
+}
+
 let typingDiv;
-
-// عرض القديم
-history.forEach(m => {
-  addMessage(m.content, m.role === "user" ? "user" : "bot");
-});
-
-// أول رسالة
-if (history.length === 0) {
-  addMessage("أهلاً 👋 معاك مساعد عبدالرحمن، قولّي عايز تتابع أوردر ولا تستفسر؟", "bot");
-}
-
-function addMessage(text, type) {
-  const div = document.createElement("div");
-  div.className = "message " + type;
-  div.innerText = text;
-  chat.appendChild(div);
-  chat.scrollTop = chat.scrollHeight;
-}
 
 function showTyping() {
   typingDiv = document.createElement("div");
@@ -114,19 +51,23 @@ function removeTyping() {
   if (typingDiv) typingDiv.remove();
 }
 
-function send() {
-  if (loading) return;
+function addMessage(text, type) {
+  const div = document.createElement("div");
+  div.className = "message " + type;
+  div.innerText = text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
 
+function getDelay(text) {
+  return Math.min(3000, 800 + text.length * 20);
+}
+
+function send() {
   let msg = document.getElementById("msg").value.trim();
   if (!msg) return;
 
-  loading = true;
-
   addMessage(msg, "user");
-  history.push({ role: "user", content: msg });
-
-  if (history.length > 10) history = history.slice(-10);
-
   document.getElementById("msg").value = "";
 
   showTyping();
@@ -136,32 +77,27 @@ function send() {
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({
       message: msg,
-      history: history
+      sessionId: sessionId
     })
   })
   .then(res => res.json())
   .then(data => {
-    removeTyping();
-    addMessage(data.reply, "bot");
+    const delay = getDelay(data.reply);
 
-    history.push({ role: "assistant", content: data.reply });
-    localStorage.setItem("history", JSON.stringify(history));
+    setTimeout(() => {
+      removeTyping();
+      addMessage(data.reply, "bot");
+    }, delay);
   })
   .catch(() => {
     removeTyping();
     addMessage("حصل خطأ 😅", "bot");
-  })
-  .finally(() => {
-    loading = false;
   });
 }
 
-// Enter للإرسال
-document.getElementById("msg").addEventListener("keydown", function(e) {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    send();
-  }
+// Enter
+document.getElementById("msg").addEventListener("keydown", e => {
+  if (e.key === "Enter") send();
 });
 </script>
 
