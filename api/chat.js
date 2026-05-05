@@ -1,22 +1,51 @@
 const sessions = new Map();
 
-// 🧠 استخراج بيانات بسيط
+// ========================
+// 🧠 Helper Functions
+// ========================
+
+function isGreeting(text) {
+  return /السلام|اهلا|hi|hello|مساء|صباح/i.test(text);
+}
+
+function isLikelyName(text) {
+  const words = text.trim().split(" ");
+
+  if (words.length < 2 || words.length > 3) return false;
+
+  if (/\d/.test(text)) return false;
+
+  if (isGreeting(text)) return false;
+
+  if (/تمام|اوكي|حاضر|ماشي/i.test(text)) return false;
+
+  if (text.length < 3 || text.length > 25) return false;
+
+  return true;
+}
+
 function extractData(text, session) {
-  if (!session.name && text.split(" ").length <= 3 && !text.match(/\d/)) {
+  // اسم
+  if (!session.name && isLikelyName(text)) {
     session.name = text;
   }
 
+  // رقم
   const phoneMatch = text.match(/01\d{9}/);
   if (phoneMatch) {
     session.phone = phoneMatch[0];
   }
 
+  // عنوان
   if (session.phone && !session.address && text.length > 5) {
     session.address = text;
   }
 }
 
+// ========================
 // 🧠 AI Intent Detection
+// ========================
+
 async function detectIntent(message) {
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -31,10 +60,9 @@ async function detectIntent(message) {
           {
             role: "system",
             content: `
-حدد نية المستخدم من الرسالة فقط بكلمة واحدة من دول:
+حدد النية بكلمة واحدة فقط من:
 greeting, tracking, return_create, return_status, return_policy, unknown
-
-رد بكلمة واحدة فقط بدون أي شرح
+بدون أي شرح
 `
           },
           { role: "user", content: message }
@@ -43,9 +71,16 @@ greeting, tracking, return_create, return_status, return_policy, unknown
     });
 
     const data = await res.json();
+
     let intent = data?.choices?.[0]?.message?.content?.trim().toLowerCase();
 
-    const allowed = ["greeting","tracking","return_create","return_status","return_policy"];
+    const allowed = [
+      "greeting",
+      "tracking",
+      "return_create",
+      "return_status",
+      "return_policy"
+    ];
 
     if (!allowed.includes(intent)) return "unknown";
 
@@ -55,6 +90,10 @@ greeting, tracking, return_create, return_status, return_policy, unknown
     return "unknown";
   }
 }
+
+// ========================
+// 🚀 API Handler
+// ========================
 
 export default async function handler(req, res) {
   try {
@@ -70,19 +109,21 @@ export default async function handler(req, res) {
       address: null
     };
 
-    // 🧠 فهم النية بالـ AI
+    // 🧠 Detect intent
     const intent = await detectIntent(message);
 
-    // 🧠 استخراج البيانات
+    // 🧠 Extract data
     extractData(message, session);
 
     let reply = "";
 
-    // 🎯 Logic Controlled Replies
+    // ========================
+    // 🎯 Intent Logic
+    // ========================
 
     if (intent === "greeting") {
       if (!session.name && !session.phone) {
-        reply = "وعليكم السلام 👋 اقدر اساعد حضرتك ازاي ؟";
+        reply = "وعليكم السلام 👋 اقدر اساعد حضرتك ازاي؟";
       } else {
         reply = "وعليكم السلام 👋";
       }
@@ -111,24 +152,35 @@ https://www.noon.com/`;
       reply = "مش فاهمك قوي 🤔 تقصد متابعة أوردر ولا إرجاع؟";
     }
 
-    // 📌 Data Flow (متحكم)
-    if (intent !== "return_create") {
-      if (session.name && !session.phone) {
+    // ========================
+    // 📌 Smart Data Flow
+    // ========================
+
+    if (intent !== "return_create" && intent !== "greeting") {
+
+      if (!session.name) {
+        reply += "\nممكن الاسم المسجل عليه الأوردر؟";
+      }
+
+      else if (session.name && !session.phone) {
         reply += `\nتمام يا ${session.name} 👌 ممكن رقم تليفونك؟`;
       }
+
       else if (session.phone && !session.address) {
         reply += "\nممتاز 👍 ممكن العنوان بالتفصيل؟";
       }
+
       else if (session.name && session.phone && session.address) {
         reply += `\nتمام كده يا ${session.name} 👌 تم تأكيد البيانات والمندوب في الطريق 🚚`;
       }
     }
 
+    // 💾 Save session
     sessions.set(sessionId, session);
 
-    res.status(200).json({ reply });
+    return res.status(200).json({ reply });
 
   } catch (err) {
-    res.status(200).json({ reply: "في مشكلة في السيرفر 😅" });
+    return res.status(200).json({ reply: "في مشكلة في السيرفر 😅" });
   }
 }
